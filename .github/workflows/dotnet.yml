@@ -1,31 +1,79 @@
-name: .NET
+name: Build and release Baka
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [master]
+    tags: ['v*']
   pull_request:
-    branches: [ main, master ]
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  build_and_test:
-
+  build:
     runs-on: windows-latest
-
     steps:
-    - name: Setup .NET
-      uses: actions/setup-dotnet@v1
-      with:
-        dotnet-version: 5.0.x
-    - name: Download latest Dalamud build
-      run: |
-        cd ..
-        curl -O https://goatcorp.github.io/dalamud-distrib/latest.zip
-        mkdir Dalamud
-        unzip latest.zip -d ./Dalamud/bin
-    - uses: actions/checkout@v2
-    - name: Restore dependencies
-      run: dotnet restore
-    - name: Build
-      run: dotnet build --no-restore
-    - name: Test
-      run: dotnet test --no-build --verbosity normal
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Download stable Dalamud
+        shell: pwsh
+        run: |
+          $directory = Join-Path $env:RUNNER_TEMP 'dalamud'
+          $archive = Join-Path $env:RUNNER_TEMP 'dalamud.zip'
+          Invoke-WebRequest 'https://goatcorp.github.io/dalamud-distrib/latest.zip' -OutFile $archive
+          Expand-Archive $archive -DestinationPath $directory
+          "DALAMUD_HOME=$directory" >> $env:GITHUB_ENV
+      - name: Restore locked dependencies
+        run: |
+          dotnet restore DalamudPluginProjectTemplate.csproj --locked-mode
+          dotnet restore tests/BakaPlugin.Tests.csproj --locked-mode
+      - name: Test roster behavior
+        run: dotnet test tests/BakaPlugin.Tests.csproj --no-restore -c Release --logger "trx;LogFileName=roster.trx"
+      - name: Build plugin
+        run: dotnet build DalamudPluginProjectTemplate.csproj --no-restore -c Release
+      - name: Validate and package
+        shell: pwsh
+        run: |
+          $version = (Get-Content 'bin/Release/BakaPlugin.json' | ConvertFrom-Json).AssemblyVersion
+          $tag = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "v$version" }
+          python scripts/package.py --tag $tag --repository $env:GITHUB_REPOSITORY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BakaPlugin
+          path: dist/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: tests/TestResults/*.trx
+          if-no-files-found: ignore
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: BakaPlugin
+          path: dist
+      - name: Publish installable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          dist/BakaPlugin.zip dist/repo.json dist/SHA256SUMS
+          --repo "$GITHUB_REPOSITORY" --verify-tag
+          --title "Baka Free Company $GITHUB_REF_NAME"
+          --notes-file docs/RELEASE_NOTES.md

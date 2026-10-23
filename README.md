@@ -1,37 +1,39 @@
-# DalamudPluginProjectTemplate
-An opinionated Visual Studio project template for Dalamud plugins, with attributes for more maintainable command setup and teardown.
+# Baka Free Company
 
-## Hint paths
-The project file includes hint paths for the dependencies, which are set up to not include much information about the developer's filesystem.
-You may need to adjust these paths yourself, if they don't represent your development environment.
+A modern parchment-style Dalamud plugin for **Shelter on Raiden**. Open `/baka` to see the online roster, each member's job and location, and game-reported activity such as duties, queues, cutscenes, or being AFK.
 
-## Attributes
-This template includes an attribute framework reminiscent of [Discord.Net](https://github.com/discord-net/Discord.Net).
+## Install in Dalamud
 
-```csharp
-[Command("/example1")]
-[Aliases("/ex1", "/e1")]
-[HelpMessage("Example help message.")]
-public void ExampleCommand1(string command, string args)
-{
-    var chat = this.pluginInterface.Framework.Gui.Chat;
-    var world = this.pluginInterface.ClientState.LocalPlayer.CurrentWorld.GameData;
-    chat.Print($"Hello {world.Name}!");
-    PluginLog.Log("Message sent successfully.");
-}
+1. Open Dalamud Settings (`/xlsettings`) → **Experimental** → **Custom Plugin Repositories**.
+2. Add and enable:
+   ```text
+   https://github.com/cloudesh/baka_plugin/releases/latest/download/repo.json
+   ```
+3. Save, open `/xlplugins`, find **Baka Free Company**, and install it.
+4. Open the game's **Free Company → Members** tab, then run `/baka`.
 
-[Command("/example2")]
-[DoNotShowInHelp]
-public void ExampleCommand2(string command, string args)
-{
-    // do nothing
-}
+The repository URL becomes live when the first tagged GitHub release succeeds. Updates use the same URL.
+
+## Roster behavior
+
+The panel reads the game's Free Company roster, not the nearby object list. It accepts only **Shelter / Raiden**, checks that the company and member proxies refer to the same FC, and copies native data on the framework thread. No roster data is uploaded anywhere.
+
+Member requests are limited to once every 30 seconds while the panel is open. The game's Members tab may need to be opened before data is available. Counts and activities reflect the last native roster response; they are not guaranteed real-time. Incomplete rosters are marked, and unavailable locations are shown explicitly. A job does not prove someone is actively crafting or gathering, and the game may not disclose an exact duty name.
+
+`/baka` toggles the window. `/baka refresh` requests an update, respecting the cooldown.
+
+## Build and release
+
+Requires .NET SDK 10 and Dalamud API 15. Download the stable developer distribution from `https://goatcorp.github.io/dalamud-distrib/latest.zip`, extract it, and set `DALAMUD_HOME` to that directory. XIVLauncher users can use their local `addon/Hooks/dev` directory.
+
+```sh
+dotnet restore DalamudPluginProjectTemplate.csproj --locked-mode
+dotnet build DalamudPluginProjectTemplate.csproj --no-restore -c Release
+dotnet restore tests/BakaPlugin.Tests.csproj --locked-mode
+dotnet test tests/BakaPlugin.Tests.csproj --no-restore -c Release
+python scripts/package.py --tag v0.1.0.0
 ```
 
-This automatically registers and unregisters the methods that they're attached to on initialization and dispose.
+Push a `v<Version>` tag matching the project version to build, test, package, and publish through GitHub Actions. The workflow uploads `BakaPlugin.zip`, `repo.json`, and `SHA256SUMS` to a GitHub release. The package validator rejects mismatched tags, manifests, or DLLs. No manually supplied repository token is needed by the workflow.
 
-## GitHub Actions
-Running the shell script `DownloadGithubActions.sh` will download some useful GitHub actions for you. You can also delete this file if you have no need for it.
-
-### Current Actions
-  * dotnet build/test
+Automated tests cover identity, offline filtering, combined statuses, duplicate rows, search, and incomplete data. In-game UI and native-data checks are in [the test checklist](docs/IN_GAME_TEST.md).

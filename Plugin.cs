@@ -1,84 +1,64 @@
-﻿using Dalamud.Game.ClientState;
 using Dalamud.Game.Command;
-using Dalamud.Game.Gui;
 using Dalamud.Interface.Windowing;
-using Dalamud.Logging;
+using Dalamud.IoC;
 using Dalamud.Plugin;
-using DalamudPluginProjectTemplate.Attributes;
-using System;
+using Dalamud.Plugin.Services;
 
-namespace DalamudPluginProjectTemplate
+namespace BakaPlugin;
+
+public sealed class Plugin : IDalamudPlugin
 {
-    public class Plugin : IDalamudPlugin
+    [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
+    [PluginService] internal static ICommandManager Commands { get; private set; } = null!;
+    [PluginService] internal static IClientState ClientState { get; private set; } = null!;
+    [PluginService] internal static IFramework Framework { get; private set; } = null!;
+    [PluginService] internal static IDataManager Data { get; private set; } = null!;
+    [PluginService] internal static IPluginLog Log { get; private set; } = null!;
+
+    private readonly WindowSystem windows = new("BakaPlugin");
+    private readonly RosterService roster;
+    private readonly PluginWindow window;
+
+    public Plugin()
     {
-        private readonly DalamudPluginInterface pluginInterface;
-        private readonly ChatGui chat;
-        private readonly ClientState clientState;
-
-        private readonly PluginCommandManager<Plugin> commandManager;
-        private readonly Configuration config;
-        private readonly WindowSystem windowSystem;
-
-        public string Name => "Your Plugin's Display Name";
-
-        public Plugin(
-            DalamudPluginInterface pi,
-            CommandManager commands,
-            ChatGui chat,
-            ClientState clientState)
+        roster = new RosterService(ClientState, Framework, Data, Log);
+        window = new PluginWindow(roster) { IsOpen = true };
+        windows.AddWindow(window);
+        Commands.AddHandler("/baka", new CommandInfo(OnCommand)
         {
-            this.pluginInterface = pi;
-            this.chat = chat;
-            this.clientState = clientState;
+            HelpMessage = "Open the Baka Free Company roster. /baka refresh requests a roster update.",
+        });
+        PluginInterface.UiBuilder.Draw += Draw;
+        PluginInterface.UiBuilder.OpenMainUi += Open;
+    }
 
-            // Get or create a configuration object
-            this.config = (Configuration)this.pluginInterface.GetPluginConfig()
-                          ?? this.pluginInterface.Create<Configuration>();
+    private void Draw()
+    {
+        roster.IsVisible = window.IsOpen;
+        windows.Draw();
+    }
 
-            // Initialize the UI
-            this.windowSystem = new WindowSystem(typeof(Plugin).AssemblyQualifiedName);
+    private void Open() => window.IsOpen = true;
 
-            var window = this.pluginInterface.Create<PluginWindow>();
-            if (window is not null)
-            {
-                this.windowSystem.AddWindow(window);
-            }
-
-            this.pluginInterface.UiBuilder.Draw += this.windowSystem.Draw;
-
-            // Load all of our commands
-            this.commandManager = new PluginCommandManager<Plugin>(this, commands);
-        }
-
-        [Command("/example1")]
-        [HelpMessage("Example help message.")]
-        public void ExampleCommand1(string command, string args)
+    private void OnCommand(string command, string args)
+    {
+        if (args.Trim().Equals("refresh", StringComparison.OrdinalIgnoreCase))
         {
-            // You may want to assign these references to private variables for convenience.
-            // Keep in mind that the local player does not exist until after logging in.
-            var world = this.clientState.LocalPlayer?.CurrentWorld.GameData;
-            this.chat.Print($"Hello, {world?.Name}!");
-            PluginLog.Log("Message sent successfully.");
+            Open();
+            roster.RequestRefresh();
         }
-
-        #region IDisposable Support
-        protected virtual void Dispose(bool disposing)
+        else
         {
-            if (!disposing) return;
-
-            this.commandManager.Dispose();
-
-            this.pluginInterface.SavePluginConfig(this.config);
-
-            this.pluginInterface.UiBuilder.Draw -= this.windowSystem.Draw;
-            this.windowSystem.RemoveAllWindows();
+            window.Toggle();
         }
+    }
 
-        public void Dispose()
-        {
-            Dispose(true);
-            GC.SuppressFinalize(this);
-        }
-        #endregion
+    public void Dispose()
+    {
+        PluginInterface.UiBuilder.Draw -= Draw;
+        PluginInterface.UiBuilder.OpenMainUi -= Open;
+        Commands.RemoveHandler("/baka");
+        roster.Dispose();
+        windows.RemoveAllWindows();
     }
 }
